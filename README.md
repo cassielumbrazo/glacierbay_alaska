@@ -167,9 +167,3 @@ and commit the `.ipynb`. Plotting notebooks use `%matplotlib inline` to embed
 static figures. Keep those outputs when saving so that everyone can view the
 figures and tables directly in the GitHub browser.
 
-## Downloader checks
-
-From the repository root, run `bash tests/test_download_hrrrak.sh` for small
-offline checks of archive fallback, failed downloads, GRIB validation, cleanup,
-date parsing, and existing-file handling. These use mocks and temporary folders;
-they do not download data or change the included sample.
