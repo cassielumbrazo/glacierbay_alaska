@@ -126,5 +126,5 @@ files. The selected model cell represents an area, not a verified station point.
 GitHub displays saved notebook outputs; it does not run Python. After running a
 notebook with the **glacierbay** kernel, **save it with its outputs** (`Ctrl+S`)
 and commit the `.ipynb`. Plotting notebooks use `%matplotlib inline` to embed
-static figures. Keep those outputs when saving so the student can view the
+static figures. Keep those outputs when saving so that everyone can view the
 figures and tables directly in the GitHub browser.
