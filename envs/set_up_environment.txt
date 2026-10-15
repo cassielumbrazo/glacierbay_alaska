@@ -1,0 +1,31 @@
+Glacier Bay Python environment setup
+
+Prerequisites: Mamba (or Conda) installed, and the project's environment.yml file.
+Run these commands in a terminal on the computer where you will run the project.
+If using VS Code over SSH, use the terminal on the remote Linux machine.
+
+1. Change to the project folder containing environment.yml:
+   cd /path/to/project
+
+2. Create the environment (only needed once):
+   mamba env create -n glacierbay -f environment.yml
+
+3. Activate it before working on the project:
+   mamba activate glacierbay
+
+4. Register the environment as a Jupyter kernel (only needed once):
+   python -m ipykernel install --user --name glacierbay --display-name "Python (Glacier Bay)"
+
+5. In VS Code, open the project notebook (.ipynb), click Select Kernel,
+   and choose Python (Glacier Bay). Install the VS Code Python and Jupyter
+   extensions if needed.
+
+To run a Python script from the activated terminal:
+   python script_name.py
+
+When finished:
+   mamba deactivate
+
+If using Conda instead of Mamba, replace mamba with conda in the commands above.
+The environment.yml file must include the packages required by the project,
+including ipykernel for notebook support.
