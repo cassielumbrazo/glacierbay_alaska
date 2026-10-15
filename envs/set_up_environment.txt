@@ -1,31 +1,30 @@
 Glacier Bay Python environment setup
 
-Prerequisites: Mamba (or Conda) installed, and the project's environment.yml file.
-Run these commands in a terminal on the computer where you will run the project.
-If using VS Code over SSH, use the terminal on the remote Linux machine.
+Run from the glacierbay_alaska repository root (not from envs/).
+If needed: cd /path/to/glacierbay_alaska
+Use the terminal on the machine where the notebooks will run (including over SSH).
 
-1. Change to the project folder containing environment.yml:
-   cd /path/to/project
+1. Create glacierbay once, using Conda or Mamba:
+   conda env create -n glacierbay -f envs/environment.yml
+   # Mamba alternative: mamba env create -n glacierbay -f envs/environment.yml
+   # If glacierbay already exists, activate it; do not recreate it.
 
-2. Create the environment (only needed once):
-   mamba env create -n glacierbay -f environment.yml
+2. Activate it for every project session:
+   conda activate glacierbay
 
-3. Activate it before working on the project:
-   mamba activate glacierbay
+3. Register the notebook kernel once:
+   python -m ipykernel install --user --name glacierbay --display-name "Python (glacierbay)"
 
-4. Register the environment as a Jupyter kernel (only needed once):
-   python -m ipykernel install --user --name glacierbay --display-name "Python (Glacier Bay)"
+4. In VS Code, install the Python and Jupyter extensions if needed.
+   Open 4_explore_hrrrak_netcdf.ipynb, select glacierbay as its kernel, and Run All.
+   The cleaned sample is included; downloading and notebooks 1-3 are not required
+   for this first exploration. Save outputs so figures show on GitHub.
+   Alternatively start JupyterLab from the repository root:
+   jupyter lab
 
-5. In VS Code, open the project notebook (.ipynb), click Select Kernel,
-   and choose Python (Glacier Bay). Install the VS Code Python and Jupyter
-   extensions if needed.
+5. When finished:
+   conda deactivate
 
-To run a Python script from the activated terminal:
-   python script_name.py
-
-When finished:
-   mamba deactivate
-
-If using Conda instead of Mamba, replace mamba with conda in the commands above.
-The environment.yml file must include the packages required by the project,
-including ipykernel for notebook support.
+Separate tools for downloading additional data (Linux): Bash, curl, GNU Parallel,
+GNU date/coreutils, awk, grep, and wgrib2. These are not installed by the Python
+environment file. See hrrrak/download_hrrrak_readme.txt for checks and commands.

@@ -1,215 +1,176 @@
 #!/usr/bin/env bash
-# Download HRRR data for Alaska domain
-# This script has been edited from download_hrrr-AK_joe.sh to have the correct variables and box.
-#
-# The AK domain gets run every 3 hours, with hourly forecast time
-#
-# Can either be given two arguments for year and month:
-#   ./download_hrrrak_final.sh YYYY MM (Archive)
-# or loop over the dates given as one argument separated by comma.
-#   ./download_hrrrak_final.sh YYYYMMDD,YYYYMMDD (Archive)
-#
-# The third is optional and can specify the archive source. Default
-# is to get from Google and can be changed to the University of Utah by
-# by passing 'UofU' or Amazon with 'AWS'.
+# Run from hrrrak/: bash download_hrrrak_lone_island.sh YYYYMMDD [Google|AWS|Azure]
+# Inclusive range: YYYYMMDD,YYYYMMDD [archive]; whole month: YYYY MM [archive].
+# Requirements: Linux Bash, curl, GNU Parallel, GNU date, awk, grep, wgrib2.
+# Sourcing defines functions/settings only, for small offline tests.
+set -euo pipefail
 
-set -e
-export HRRR_VARS="PRES:surface|HGT:surface|TMP:surface|TMP:2 m above ground|RH:2 m above ground|UGRD:10 m above ground|VGRD:10 m above ground|DSWRF:surface|DLWRF:surface|APCP:surface|PRATE:surface|SNOWC:surface|ASNOW:surface|TCDC:entire atmosphere|" # removing some things.. 
-
-# HRRR run hours
-# The AK domain is run every 3 hours for all forecast hours
-export HRRR_DAY_HOURS=$(seq 0 3 21)
-export HRRR_FC_HOURS=(5 6 7)
-# export HRRR_DAY_HOURS=(0 6 12 18)
-# export HRRR_FC_HOURS=(6 7 8 9 10 11)
-
-# Targeted AK domain
-# export GRIB_AREA="-134.964:-133.893 58.077:58.603" # Simple bounding box for Juneau, Alaska
-# export GRIB_AREA="-137.55:-136.86 58.54:59.01" # bounding box around John Hopkins, Alaska with more buffer room
-export GRIB_AREA="-136.373558:-136.217390 58.681422:58.762504" # Lone Island (9 × 9 km) small bounding box
-
-# Job control - the defaults require to have 8 CPUs for one script run
-## Number of jobs to download in parallel
+# SNOD = snow depth; WEASD = instantaneous snow water equivalent. ASNOW is
+# accumulated snowfall, a different quantity. Keep both APCP accumulation intervals;
+# notebook 2 explicitly selects the total starting at initialization.
+export HRRR_VARS='PRES:surface|HGT:surface|TMP:surface|TMP:2 m above ground|RH:2 m above ground|UGRD:10 m above ground|VGRD:10 m above ground|DSWRF:surface|DLWRF:surface|APCP:surface|PRATE:surface|SNOD:surface|WEASD:surface|SNOWC:surface|ASNOW:surface|TCDC:entire atmosphere'
+export HRRR_DAY_HOURS='0 3 6 9 12 15 18 21'
+HRRR_FC_HOURS=(5 6 7)
+export GRIB_AREA='-136.373558:-136.217390 58.681422:58.762504'
 PARALLEL_JOBS=15
-## Number of parallel Grib threads per job
-export GRIB_THREADS="-ncpu 2"
-
-# List of possible HRRR download sources
-export AWS_ARCHIVE='AWS'
-export Google_ARCHIVE='Google'
-export Azure_ARCHIVE='Azure'
+export GRIB_THREADS='-ncpu 2'
 
 set_archive_url() {
-  if [[ ! -v ALT_DATE ]]; then
-    local HRRR_DAY=${DATE}
-  else
-    local HRRR_DAY=${ALT_DATE}
-  fi
-
-  if [ $1 == ${AWS_ARCHIVE} ]; then
-      export ARCHIVE_URL="https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.${HRRR_DAY}/alaska/${FILE_NAME}"
-  elif [ $1 == ${Google_ARCHIVE} ]; then
-      export ARCHIVE_URL="https://storage.googleapis.com/high-resolution-rapid-refresh/hrrr.${HRRR_DAY}/alaska/${FILE_NAME}"
-  elif [ $1 == ${Azure_ARCHIVE} ]; then
-      export ARCHIVE_URL="https://noaahrrr.blob.core.windows.net/hrrr/hrrr.${HRRR_DAY}/alaska/${FILE_NAME}"
-  fi
+    local archive=$1
+    case "$archive" in
+        AWS) ARCHIVE_URL="https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.${DATE}/alaska/${FILE_NAME}" ;;
+        Google) ARCHIVE_URL="https://storage.googleapis.com/high-resolution-rapid-refresh/hrrr.${DATE}/alaska/${FILE_NAME}" ;;
+        Azure) ARCHIVE_URL="https://noaahrrr.blob.core.windows.net/hrrr/hrrr.${DATE}/alaska/${FILE_NAME}" ;;
+        *) printf 'Unsupported archive: %s\n' "$archive" >&2; return 1 ;;
+    esac
 }
-export -f set_archive_url
 
-check_file_in_archive() {
-  set_archive_url $1
-  STATUS_CODE=$(curl -s -o /dev/null -I -w "%{http_code}" ${ARCHIVE_URL})
-
-  if [ "${STATUS_CODE}" == "404" ]; then
-    >&2 printf "   missing\n"
-    return 3
-  fi
-
-  >&2 printf "\n"
-  unset ALT_DATE
-  return 0
-}
-export -f check_file_in_archive
-
-check_alternate_archive() {
-    ARCHIVES=($UofU_ARCHIVE $AWS_ARCHIVE $Google_ARCHIVE $Azure_ARCHIVE)
-
-    >&2 printf "  Checking alternate archive: \n"
-    for ALT_ARCHIVE in "${ARCHIVES[@]}"; do
-      if [[ "${ALT_ARCHIVE}" == "${ARCHIVE}" ]]; then
-        continue
-      fi
-
-      >&2 printf "   - ${ALT_ARCHIVE}"
-      check_file_in_archive ${ALT_ARCHIVE}
-      if [ $? -eq 0 ]; then
-        return 0
-      fi
+validate_grib() {
+    local file=$1 inventory required
+    [[ -s "$file" ]] || return 1
+    # Inventory alone may succeed on a truncated message: decode all records too.
+    inventory=$(wgrib2 "$file" -s) || return 1
+    [[ -n "$inventory" ]] || return 1
+    wgrib2 "$file" -stats >/dev/null || return 1
+    # Required notebook-2 fields; accept additional records in older valid samples.
+    for required in 'PRES:surface' 'HGT:surface' 'TMP:surface' \
+        'TMP:2 m above ground' 'RH:2 m above ground' \
+        'UGRD:10 m above ground' 'VGRD:10 m above ground' \
+        'DSWRF:surface' 'DLWRF:surface' 'PRATE:surface' \
+        'SNOD:surface' 'WEASD:surface'; do
+        if ! grep -Fq ":${required}:" <<< "$inventory"; then
+            printf 'Missing required field %s in %s\n' "$required" "$file" >&2
+            return 1
+        fi
     done
-
-    unset ALT_DATE
-    touch "${FILE_NAME}.missing"
-    return 3
+    # Require the run-total APCP used by notebook 2, not just a one-hour interval.
+    grep -Eq ':APCP:surface:0-[0-9]+ hour acc fcst:' <<< "$inventory" || return 1
+    # Snow depth / SWE must include instantaneous forecasts, not just accumulations.
+    grep -Eq ':SNOD:surface:[0-9]+ hour fcst:' <<< "$inventory" || return 1
+    grep -Eq ':WEASD:surface:[0-9]+ hour fcst:' <<< "$inventory" || return 1
 }
-export -f check_alternate_archive
 
-check_file_existence(){
-  # Check for existing file on disk and that it is not zero in size
-  if [[ -s "${FILE_NAME}" ]]; then
-    >&1 printf "  exists \n"
-    exit 0
-  fi
-  return 3
+get_grib_range() {
+    # One contiguous byte span covers matching messages, including the last one.
+    # If the last match is the last index entry, request through end-of-file.
+    awk -F: -v pattern="$HRRR_VARS" '
+        $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {
+            n++; offset[n]=$2
+            if ($0 ~ pattern) { if (!first) first=n; last=n }
+        }
+        END {
+            if (!first) exit 1
+            if (last < n) printf "%.0f-%.0f\n", offset[first], offset[last+1]-1
+            else printf "%.0f-\n", offset[first]
+        }
+    ' "$1"
 }
-export -f check_file_existence
 
-get_grib_range(){
-  INDEX_FILE="${1}.idx"
-  RANGE_GREP="grep -A 1 -B 1 "
-
-  curl -s ${ARCHIVE_URL}.idx -o ${INDEX_FILE}
-
-  export MIN_RANGE=$(${RANGE_GREP} -E "${HRRR_VARS}" ${INDEX_FILE} | cut -d ":" -f 2 | head -n 1)
-  export MAX_RANGE=$(${RANGE_GREP} -E "${HRRR_VARS}" ${INDEX_FILE} | cut -d ":" -f 2 | tail -n 1)
-
-  rm ${INDEX_FILE}
+attempt_download() {
+    local archive=$1 work=$2 byte_range
+    local -a threads area
+    set_archive_url "$archive" || return 1
+    printf 'Trying %s: %s\n' "$archive" "$FILE_NAME"
+    # Explicit status checks allow fallback even with errexit enabled.
+    curl --fail --show-error --silent --location --retry 2 \
+        --connect-timeout 20 --max-time 180 \
+        "${ARCHIVE_URL}.idx" -o "$work/index" || return 1
+    byte_range=$(get_grib_range "$work/index") || return 1
+    [[ "$byte_range" =~ ^[0-9]+-[0-9]*$ ]] || return 1
+    curl --fail --show-error --silent --location --retry 2 \
+        --connect-timeout 20 --max-time 600 --range "$byte_range" \
+        "$ARCHIVE_URL" -o "$work/input.grib2" || return 1
+    read -r -a threads <<< "$GRIB_THREADS"
+    read -r -a area <<< "$GRIB_AREA"
+    # Regular temporary input avoids FIFO deadlocks. pipefail catches either stage.
+    if ! wgrib2 "$work/input.grib2" -v0 "${threads[@]}" -set_grib_type same \
+        -small_grib "${area[@]}" - | \
+        wgrib2 - -v0 "${threads[@]}" -match "$HRRR_VARS" -grib "$work/output.grib2"; then
+        return 1
+    fi
+    validate_grib "$work/output.grib2" || return 1
 }
-export -f get_grib_range
 
-download_day(){
-  HRRR_DATE=$1
-  # FC_HOUR=$2
-  # FILE_NAME="hrrr.t$(printf "%02d" ${HRRR_DATE})z.wrfsfcf0${FC_HOUR}.ak.grib2"
-  FC_HOUR=$(printf "%02d" $2)
-  FILE_NAME="hrrr.t$(printf "%02d" ${HRRR_DATE})z.wrfsfcf${FC_HOUR}.ak.grib2" # remove leading zero
+download_day() (
+    # Each GNU Parallel job has its own subshell, temporary directory, and cleanup.
+    set -euo pipefail
+    local run=$1 lead=$2 work archive
+    local -a archives
+    FILE_NAME=$(printf 'hrrr.t%02dz.wrfsfcf%02d.ak.grib2' "$run" "$lead")
+    if validate_grib "$FILE_NAME"; then
+        printf 'Valid existing file: %s\n' "$FILE_NAME"
+        return 0
+    fi
+    # Preserve invalid existing files until a validated replacement is ready.
+    work=$(mktemp -d "./.${FILE_NAME}.XXXXXX") || return 1
+    trap 'rm -rf -- "$work"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    archives=("$ARCHIVE")
+    for archive in AWS Google Azure; do
+        [[ "$archive" == "$ARCHIVE" ]] || archives+=("$archive")
+    done
+    for archive in "${archives[@]}"; do
+        rm -f -- "$work/input.grib2" "$work/output.grib2" "$work/index"
+        if attempt_download "$archive" "$work"; then
+            # Same-filesystem rename publishes only complete, decoded output.
+            mv -f -- "$work/output.grib2" "$FILE_NAME" || return 1
+            printf 'Created: %s\n' "$FILE_NAME"
+            return 0
+        fi
+        printf 'Failed on %s: %s; trying next archive if available\n' "$archive" "$FILE_NAME" >&2
+    done
+    printf 'All archives failed: %s/%s\n' "$DATE" "$FILE_NAME" >&2
+    return 1
+)
 
-  printf "  File: ${FILE_NAME}"
-
-  # Clean up any old temporary pipes from previous runs
-  find . -type p -name "${FILE_NAME}_tmp" -delete
-  # Remove any previous downloads of empty grib files
-  find . -type f -name ${FILE_NAME} -size 0 -delete
-  # Remove any previously missing files in archives and try again
-  find . -type f -name "${FILE_NAME}.missing" -size 0 -delete
-
-  # Skip download if the file already exists locally
-  check_file_existence
-
-  # Check the available archives for file presence
-  check_file_in_archive ${ARCHIVE}
-  if [ $? -eq 3 ]; then
-    check_alternate_archive
-  fi
-
-  # Temporary files for download logic
-  TMP_FILE="${FILE_NAME}_tmp"
-  mkfifo $TMP_FILE
-
-  # Reduce download size of GRIB file by requesting a specific range
-  get_grib_range ${FILE_NAME}
-
-  # Three tiered pipe:
-  # * Download the file
-  # * Crop to area of interest
-  # * Reduce to relevant HRRR variables
-  printf '\n'
-  curl -s --range ${MIN_RANGE}-${MAX_RANGE} ${ARCHIVE_URL} -o $TMP_FILE | \
-  wgrib2 $TMP_FILE -v0 ${GRIB_THREADS} -set_grib_type same -small_grib ${GRIB_AREA} - | \
-  wgrib2 - -v0 ${GRIB_THREADS} -match "${HRRR_VARS}" -grib $FILE_NAME >&1
-
-  rm $TMP_FILE
-
-  if [ $? -eq 0 ]; then
-    >&1 printf " created \n"
-  fi
+main() {
+    local spec=${1:-} start end current archive tool folder month_end
+    local -a dates runs
+    if [[ $# -lt 1 || $# -gt 3 ]]; then
+        printf 'Usage: %s YYYYMMDD[,YYYYMMDD] [Google|AWS|Azure] OR YYYY MM [archive]\n' "$0" >&2
+        return 2
+    fi
+    if [[ "$spec" =~ ^[0-9]{4}$ && ${2:-} =~ ^[0-9]{2}$ ]]; then
+        start=$(date -d "$spec-$2-01" +%Y%m%d) || return 2
+        month_end=$(date -d "${start} +1 month -1 day" +%Y%m%d) || return 2
+        end=$month_end
+        archive=${3:-Google}
+    else
+        [[ $# -le 2 ]] || return 2
+        if [[ "$spec" =~ ^[0-9]{8},[0-9]{8}$ ]]; then
+            start=${spec%,*}; end=${spec#*,}
+        elif [[ "$spec" =~ ^[0-9]{8}$ ]]; then
+            start=$spec; end=$spec
+        else
+            printf 'Use one YYYYMMDD date or an inclusive YYYYMMDD,YYYYMMDD range.\n' >&2
+            return 2
+        fi
+        archive=${2:-Google}
+    fi
+    case "$archive" in Google|AWS|Azure) ;; *) printf 'Unsupported archive: %s\n' "$archive" >&2; return 2 ;; esac
+    [[ $(date -d "$start" +%Y%m%d) == "$start" && $(date -d "$end" +%Y%m%d) == "$end" && "$start" -le "$end" ]] || return 2
+    for tool in curl parallel wgrib2 date awk grep mktemp; do
+        command -v "$tool" >/dev/null || { printf 'Missing command: %s\n' "$tool" >&2; return 2; }
+    done
+    dates=(); current=$start
+    while [[ "$current" -le "$end" ]]; do
+        dates+=("$current")
+        current=$(date -d "$current +1 day" +%Y%m%d) || return 2
+    done
+    export ARCHIVE=$archive
+    export -f set_archive_url validate_grib get_grib_range attempt_download download_day
+    read -r -a runs <<< "$HRRR_DAY_HOURS"
+    for DATE in "${dates[@]}"; do
+        export DATE
+        folder="hrrr.${DATE}"
+        mkdir -p "$folder" || return 1
+        # GNU Parallel returns nonzero for failed jobs; propagate it to the caller.
+        (cd "$folder" && parallel --halt soon,fail=1 --jobs "$PARALLEL_JOBS" \
+            --tagstring 'hour-{1}-fc-{2}' download_day ::: "${runs[@]}" ::: "${HRRR_FC_HOURS[@]}") || return 1
+    done
 }
-export -f download_day
 
-# Parse the given user inputs - trying something new here to fix the given daterange 
-if [[ ! -z $2 ]] && [[ $2 != @($UofU_ARCHIVE|$AWS_ARCHIVE|$Google_ARCHIVE|$Azure_ARCHIVE) ]]; then
-  export YEAR=$1
-  export MONTH=$2
-  export LAST_DAY=$(date -d "${MONTH}/01/${YEAR} + 1 month - 1 day" +%d)
-  export DATES=($(seq -f "${YEAR}${MONTH}%02g" 1 $LAST_DAY))
-
-elif [[ "$1" =~ ^[0-9]{8},[0-9]{8}$ ]]; then
-  START_DATE=$(echo $1 | cut -d',' -f1)
-  END_DATE=$(echo $1 | cut -d',' -f2)
-  export DATES=()
-  CURRENT_DATE="$START_DATE"
-  while [[ "$CURRENT_DATE" -le "$END_DATE" ]]; do
-    DATES+=("$CURRENT_DATE")
-    CURRENT_DATE=$(date -d "$CURRENT_DATE +1 day" +"%Y%m%d")
-  done
-
-else
-  IFS=',' read -ra DATES <<< "$1"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
 fi
-
-
-# Set the archive, defaults to Google
-if [[ "$2" == "${Azure_ARCHIVE}" ]] || [[ "$3" == "${Azure_ARCHIVE}" ]]; then
-  export ARCHIVE=${Azure_ARCHIVE}
-elif [[ "$2" == "${AWS_ARCHIVE}" ]] || [[ "$3" == "${AWS_ARCHIVE}" ]]; then
-  export ARCHIVE=${AWS_ARCHIVE}
-else
-  export ARCHIVE=${Google_ARCHIVE}
-fi
-
-printf "Getting files from: ${ARCHIVE}\n"
-
-# Get the data
-for DATE in "${DATES[@]}"; do
-  printf "Processing: $DATE\n"
-  export DATE=${DATE}
-
-  FOLDER="hrrr.${DATE}"
-  mkdir -p $FOLDER
-  pushd $FOLDER > /dev/null
-
-  parallel \
-    --color --jobs ${PARALLEL_JOBS} --tagstring "hour-{1}-fc-{2}" download_day \
-    ::: ${HRRR_DAY_HOURS[@]} ::: "${HRRR_FC_HOURS[@]}"
-
-  popd > /dev/null
-done

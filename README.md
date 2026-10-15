@@ -17,6 +17,23 @@ python -m ipykernel install --user --name glacierbay --display-name "Python (gla
 For later sessions, run `conda activate glacierbay`. In VS Code, select
 **glacierbay** in the Python interpreter and notebook kernel pickers. Mamba can
 be used instead of Conda for environment creation and activation.
+If `glacierbay` already exists, activate it rather than recreating it.
+
+## Start with the included sample
+
+**After setting up `glacierbay`, open
+[4_explore_hrrrak_netcdf.ipynb](4_explore_hrrrak_netcdf.ipynb) directly and run its
+cells in order.** The cleaned April 1–7 sample NetCDF is included:
+[hrrrak/lone_island_small_hrrrak_20190401_20190407_crs.nc](hrrrak/lone_island_small_hrrrak_20190401_20190407_crs.nc).
+No new download, GRIB processing, or cleaning is needed to start exploring.
+The notebook reads this file without changing it. Its plots use local data;
+no network access or separate downloader tools are needed.
+
+## Preparing more data
+
+Follow **notebook 1 → download script → notebook 2 → notebook 3 → notebook 4**
+when preparing a new sample. The sections below explain each step. See
+[Changing samples](#changing-samples-current-limits) before changing dates or area.
 
 ## Project and first sample
 
@@ -34,9 +51,7 @@ Bay National Park, Alaska**.
 | Processed sample | 168 forecast records on a 3 × 3 grid |
 
 The notebooks below prepare and explore model data. Station-data loading and
-model–observation comparison are future steps. Background metadata and open
-questions are recorded in
-[lone_island_hrrr_ak_comparison.ipynb](lone_island_hrrr_ak_comparison.ipynb).
+model–observation comparison are future steps.
 
 ## 1. Choose the bounding box
 
@@ -58,7 +73,7 @@ Copy the chosen **`GRIB_AREA`** into
 Review its variables, initialization times, forecast leads, and parallel-job
 settings before running it.
 
-Follow [download_hrrrak_readme.txt](download_hrrrak_readme.txt) for prerequisites,
+Follow [hrrrak/download_hrrrak_readme.txt](hrrrak/download_hrrrak_readme.txt) for prerequisites,
 command options, and output checks. The download requires Bash, curl, GNU
 Parallel, wgrib2, and GNU date in addition to the Python environment.
 
@@ -71,7 +86,8 @@ bash download_hrrrak_lone_island.sh 20190401,20190407
 ```
 
 The two dates specify an **inclusive range of initialization days in UTC**.
-Downloads go into `hrrrak/hrrr.YYYYMMDD/`. Existing nonempty files are skipped;
+Downloads go into `hrrrak/hrrr.YYYYMMDD/`. Existing files are skipped only after
+validation of GRIB decoding and the fields required by notebook 2;
 use a separate output folder when changing the domain or variables.
 
 ## 2. Process the GRIB files into NetCDF
@@ -119,7 +135,29 @@ It reads the cleaned `_crs.nc` file and guides the student through:
 
 The point selection remains in memory, and the input file is unchanged. This
 notebook uses the CRS saved by notebook 3 and does not need the original GRIB
-files. The selected model cell represents an area, not a verified station point.
+files. Start here using the included sample; notebook 3 is needed only when
+regenerating cleaned data. The selected model cell represents an area, not a
+verified station point.
+
+## Changing samples: current limits
+
+The current notebooks intentionally protect the small Lone Island sample.
+**The larger box in notebook 1 cannot be processed by notebook 2 unchanged.**
+
+| Setting | Where to update or review |
+| :--- | :--- |
+| Spatial extent | Set sizes in notebook 1; copy its `GRIB_AREA` into the download script. Use a separate data folder for different bounds or fields. |
+| Download dates | Supply initialization dates to `hrrrak/download_hrrrak_lone_island.sh`. Two dates mean an inclusive range; runs use UTC. |
+| Runs and leads | Keep the script's `HRRR_DAY_HOURS` / `HRRR_FC_HOURS` consistent with notebook 2's `run_hours` / `lead_hours`. |
+| Processing dates | Set notebook 2's `sample_start` and `sample_end`. Its discovery pattern and date guard currently restrict processing to **April 2019**. Other months require an explicit reviewed code change. |
+| Spatial checks | Notebook 2 rejects grids larger than **10 × 10 cells** and locations outside the Lone Island neighborhood. Keep these checks; a larger/new region requires deliberate adaptation and validation. |
+| Raw and cleaned filenames | Notebook 2 names its output from the initialization-date range. Update notebook 3's `input_path` and notebook 4's `input_path` to the intended files; both currently name the April 1–7 sample explicitly. Notebook 3 adds `_crs` to its input stem. |
+| CRS assumptions | Notebook 3 supports this sample's northern polar stereographic grid on the GRIB model sphere (Earth shape 6). Verify projection and grid checks for new data; do not assign an arbitrary EPSG code. |
+
+Keep missing-file, unit, timing, and grid checks enabled. Update explanatory
+Markdown and sample labels when changing samples. Notebooks 2 and 3 replace
+their derived output on rerun; use a separate folder/name to preserve the
+included sample. Run notebook 4 directly to avoid regenerating it.
 
 ## Save outputs for GitHub
 
@@ -128,3 +166,10 @@ notebook with the **glacierbay** kernel, **save it with its outputs** (`Ctrl+S`)
 and commit the `.ipynb`. Plotting notebooks use `%matplotlib inline` to embed
 static figures. Keep those outputs when saving so that everyone can view the
 figures and tables directly in the GitHub browser.
+
+## Downloader checks
+
+From the repository root, run `bash tests/test_download_hrrrak.sh` for small
+offline checks of archive fallback, failed downloads, GRIB validation, cleanup,
+date parsing, and existing-file handling. These use mocks and temporary folders;
+they do not download data or change the included sample.
