@@ -37,14 +37,14 @@ when preparing a new sample. The sections below explain each step. See
 
 ## Project and first sample
 
-This project introduces an undergraduate researcher to comparing HRRR-AK model
+This project introduces the user to comparing HRRR-AK model
 forecasts with meteorological station observations near **Lone Island, Glacier
 Bay National Park, Alaska**.
 
 | Item | Current scope |
 | :--- | :--- |
 | Island reference point | 58.721963, −136.295474 |
-| Coordinate source | User-provided screenshot of a map pin; exact station location unconfirmed |
+| Coordinate source | Map pin from Google Maps; exact station location unconfirmed |
 | Available station years | 2018, 2019, 2020 |
 | Initial model sample | April 1–7, 2019 initialization dates; small Lone Island domain |
 | Forecast selection | Eight initialization times per day; 5-, 6-, and 7-hour leads |
